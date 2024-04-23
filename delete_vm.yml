@@ -1,0 +1,34 @@
+---
+- name: Delete Guest VMs and Clean Up Resources
+  hosts: localhost
+  gather_facts: no
+  become: true
+
+  vars:
+    vm_name: "{{ vm_name }}"  
+
+  tasks:
+    - name: Shutdown VMs (if running)
+      ansible.builtin.command:
+        cmd: "virsh destroy {{ vm_name }}"
+      ignore_errors: yes
+
+    - name: Undefine VMs
+      ansible.builtin.command:
+        cmd: "virsh undefine {{ vm_name }}"
+      ignore_errors: yes
+
+    - name: Delete VM disk images
+      ansible.builtin.file:
+        path: "/var/lib/libvirt/images/{{ vm_name }}/{{ vm_name }}.qcow2"
+        state: absent
+
+    - name: Delete VM cloud-init ISOs
+      ansible.builtin.file:
+        path: "/var/lib/libvirt/images/{{ vm_name }}/{{ vm_name }}-cidata.iso"
+        state: absent
+
+    - name: Remove VM data directories
+      ansible.builtin.file:
+        path: "/var/lib/libvirt/images/{{ vm_name }}"
+        state: absent
