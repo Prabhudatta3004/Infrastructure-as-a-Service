@@ -1,0 +1,74 @@
+---
+- name: Setup Network, Bridge, Veth, and DNS/DHCP Configuration
+  hosts: localhost
+  connection: local
+  become: yes
+  vars_files:
+    - vpc_details.json
+
+  tasks:
+    - name: Create Linux bridge inside container using iproute2
+      command: "ip netns exec {{ net_namespace }} ip link add name {{ linux_bridge_name }} type bridge"
+
+    - name: Set up SVI on Linux bridge inside container
+      command: "ip netns exec {{ net_namespace }} ip addr add {{ subnet_gateway }}/24 dev {{ linux_bridge_name }}"
+
+    - name: Bring up Linux bridge inside container
+      command: "ip netns exec {{ net_namespace }} ip link set {{ linux_bridge_name }} up"
+
+    - name: Create OVS bridge
+      command: "ovs-vsctl add-br {{ bridge_name }}"
+
+    - name: Bring up OVS bridge
+      command: "ip link set {{ bridge_name }} up"
+
+    - name: Create veth pair
+      command: "ip link add {{ veth_host }} type veth peer name {{ veth_ns }}"
+
+    - name: Attach one end of veth to OVS
+      command: "ovs-vsctl add-port {{ bridge_name }} {{ veth_host }}"
+
+    - name: Bring up host end of veth
+      command: "ip link set {{ veth_host }} up"
+
+    - name: Move the other end of veth to container and attach to Linux bridge
+      block:
+        - command: "ip link set {{ veth_ns }} netns {{ net_namespace }}"
+        - command: "ip netns exec {{ net_namespace }} ip link set {{ veth_ns }} master {{ linux_bridge_name }}"
+        - command: "ip netns exec {{ net_namespace }} ip link set {{ veth_ns }} up"
+
+    - name: Configure directories for dnsmasq
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "./dnsmasq_conf"
+        - "/var/lib/dnsmasq"
+
+    - name: Create dnsmasq configuration file for Linux bridge inside container
+      copy:
+        content: |
+          interface={{ linux_bridge_name }}
+          bind-interfaces
+          except-interface=lo
+          no-resolv
+          no-poll
+          dhcp-range={{ dhcp_range_start }},{{ dhcp_range_end }},{{ dhcp_subnet_mask }},{{ dhcp_lease_time }}
+          server=8.8.8.8
+          server=8.8.4.4
+          listen-address={{ subnet_gateway }}
+          dhcp-leasefile=/var/lib/dnsmasq/{{ linux_bridge_name }}.leases
+          pid-file=/var/run/dnsmasq/{{ linux_bridge_name }}.pid
+        dest: "./dnsmasq_conf/{{ net_namespace }}-{{ linux_bridge_name }}-dnsmasq.conf"
+
+    - name: Start dnsmasq as a process inside container
+      command: >
+        ip netns exec {{ net_namespace }} /bin/sh -c "nohup dnsmasq
+        --conf-file=./dnsmasq_conf/{{ net_namespace }}-{{ linux_bridge_name }}-dnsmasq.conf
+        --interface={{ linux_bridge_name }}
+        --no-daemon > /dev/null 2>&1 &"
+      async: 10
+      poll: 0
+
+    - name: SNAT inside the container
+      command: "ip netns exec {{ net_namespace }} iptables -t nat -I POSTROUTING 1 -s {{ subnet_block }} ! -d {{ subnet_block }} -j MASQUERADE"

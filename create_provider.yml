@@ -1,0 +1,108 @@
+---
+- name: Setup VPC Creation as a NameSpace
+  hosts: localhost
+  become: yes
+  vars:
+    container_name: Provider_Container
+    veth_host: prov_host1
+    veth_ns: prov_ns1
+    veth_host_ip: "10.10.7.1/30"
+    veth_ns_ip: "10.10.7.2/30"
+    gateway_ip: "10.10.7.1"  
+    nat_subnet: "10.10.7.0/30"
+    host_interface: eth0  
+
+  tasks:
+    - name: Check if the namespace already exists
+      command: ip netns list
+      register: namespaces
+      changed_when: false
+
+    - name: Exit playbook if namespace already exists
+      fail:
+        msg: "The namespace '{{ container_name }}' already exists."
+      when: container_name in namespaces.stdout
+
+    - name: Ensure docker directory is present
+      ansible.builtin.file:
+        path: ./docker
+        state: directory
+  
+    - name: Create Dockerfile if it does not exist
+      copy:
+        dest: "./docker/Dockerfile"
+        content: |
+          FROM ubuntu:22.04
+          # start getting needed packages
+          RUN apt update
+          RUN apt install net-tools -y
+          RUN apt install inetutils-ping -y
+          RUN apt install iproute2 -y
+          RUN apt install openssh-server sudo -y
+          RUN apt install iptables -y
+          RUN apt install dnsmasq -y
+          # Here we just run something in the foreground so container won't exit...
+          CMD tail -f /dev/null
+        force: no
+    
+    - name: Build Docker image using shell if it does not exist locally
+      ansible.builtin.shell:
+        cmd: "docker build -t routerc:latest ./docker"
+        executable: /bin/bash
+      register: docker_build_result
+      failed_when: docker_build_result.rc != 0  # Fails when return code is not zero
+      changed_when: "'writing image sha256' in docker_build_result.stderr"  # Changed when new image is written
+
+    - name: Check for existing Docker container
+      ansible.builtin.command:
+        cmd: "docker ps -a --filter name={{ container_name }} --format '{{ '{{.Names}}' }}'"
+      register: docker_ps
+      changed_when: false
+
+    - name: Create and start Docker container if it doesn't exist
+      ansible.builtin.shell:
+        cmd: "docker run -d --name {{ container_name }} --network none -h {{ container_name }} routerc:latest"
+      when: container_name not in docker_ps.stdout
+    
+    - name: Create script to link container namespace to netns if not present
+      copy:
+        dest: "./container2ns.sh"
+        content: |
+          #!/bin/bash
+          cn=$1
+          cnpid=$(docker inspect $cn | grep '"Pid"' | awk '{ print $2 }' | sed 's/,.*//' )
+          echo "Now create netns ${cn} based on Pid=${cnpid}"
+          touch /var/run/netns/${cn}
+          echo "ln -sf /proc/${cnpid}/ns/net /var/run/netns/${cn}"
+          ln -sf /proc/$cnpid/ns/net /var/run/netns/$cn
+        force: no
+
+    - name: Ensure script is executable
+      command: chmod +x ./container2ns.sh
+
+    - name: Execute the container to namespace linking script
+      command: ./container2ns.sh {{ container_name }}
+
+    - name: Create veth pair
+      command: ip link add {{ veth_host }} type veth peer name {{ veth_ns }}
+
+    - name: Attach one end of veth pair to the namespace
+      command: ip link set {{ veth_ns }} netns {{ container_name }}
+
+    - name: Bring up the veth inside namespace
+      command: ip netns exec {{ container_name }} ip link set {{ veth_ns }} up
+
+    - name: Bring up the host end of the veth pair
+      command: ip link set {{ veth_host }} up
+
+    - name: Assign IP address to veth inside namespace
+      command: ip netns exec {{ container_name }} ip addr add {{ veth_ns_ip }} dev {{ veth_ns }}
+
+    - name: Assign IP address to the host end of veth pair
+      command: ip addr add {{ veth_host_ip }} dev {{ veth_host }}
+
+    - name: Add default route in namespace
+      command: ip netns exec {{ container_name }} ip route add default via {{ gateway_ip }} dev {{ veth_ns }}
+    
+    - name: Host SNAT
+      command: sudo iptables -t nat -I POSTROUTING 1 -s {{ nat_subnet }} ! -d {{ nat_subnet }} -j MASQUERADE

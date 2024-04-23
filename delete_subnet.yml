@@ -1,0 +1,24 @@
+---
+- name: Delete Subnet Components
+  hosts: localhost
+  connection: local
+  become: yes
+  vars:
+    subnet_id: "{{ subnet_id }}"
+
+  tasks:
+    - name: Fetch subnet details from database
+      community.general.sqlite_query:
+        db: "tenants.db"
+        query: "SELECT linux_bridge_name, bridge_name, veth_pair_names FROM subnets WHERE subnet_id='{{ subnet_id }}'"
+      register: subnet_details
+
+    - name: Delete Linux bridge inside container
+      command: "ip netns exec {{ subnet_details.query_result[0].linux_bridge_name }} ip link delete {{ subnet_details.query_result[0].linux_bridge_name }}"
+
+    - name: Delete OVS bridge
+      command: "ovs-vsctl del-br {{ subnet_details.query_result[0].bridge_name }}"
+
+    - name: Delete Veth pairs
+      command: "ip link delete {{ item }}"
+      loop: "{{ subnet_details.query_result[0].veth_pair_names.split(',') }}"

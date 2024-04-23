@@ -1,0 +1,4 @@
+vms:
+  - name: VM1___12
+    networks:
+      - bridge: ov961713730441

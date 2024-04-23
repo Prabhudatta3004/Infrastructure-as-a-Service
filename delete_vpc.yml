@@ -1,0 +1,27 @@
+---
+- name: Remove VPC Resources
+  hosts: localhost
+  connection: local
+  become: yes
+  vars:
+    vpc_id: "{{ vpc_id }}"
+    container_name: "{{ container_name }}"
+    veth1_ip: "{{ veth1_ip }}"
+    veth2_ip: "{{ veth2_ip }}"
+
+  tasks:
+    - name: Remove Docker container
+      community.general.docker_container:
+        name: "{{ container_name }}"
+        state: absent
+
+    - name: Delete network namespace
+      command: ip netns del {{ container_name }}
+      ignore_errors: yes
+
+    - name: Delete veth pairs
+      command: ip link delete {{ item }}
+      loop:
+        - "{{ veth1_ip }}"
+        - "{{ veth2_ip }}"
+      ignore_errors: yes

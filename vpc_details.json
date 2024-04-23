@@ -1,0 +1,14 @@
+{
+    "net_namespace": "062920",
+    "linux_bridge_name": "lib71713891165",
+    "bridge_name": "ovb71713891165",
+    "subnet_id": "subnet_2257ad3f",
+    "subnet_block": "192.168.78.0/24",
+    "subnet_gateway": "192.168.78.1",
+    "dhcp_range_start": "192.168.78.50",
+    "dhcp_range_end": "192.168.78.150",
+    "dhcp_subnet_mask": "255.255.255.0",
+    "dhcp_lease_time": "12h",
+    "veth_host": "v1b71713891165",
+    "veth_ns": "v2b71713891165"
+}

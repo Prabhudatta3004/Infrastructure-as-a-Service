@@ -1,0 +1,111 @@
+---
+- name: Create Guest VMs with Custom Topology
+  hosts: localhost
+  become: yes
+  connection: local
+  gather_facts: no
+
+  vars:
+    base_config:
+      base_image_path: "/var/lib/libvirt/images/jammy-server-cloudimg-amd64.img"
+      vm_disk_size: "12G"
+      vm_memory: "{{ hostvars['localhost']['vm_memory'] | default(2048) }}"
+      vm_vcpus: "{{ hostvars['localhost']['vm_vcpus'] | default(2) }}"
+      root_password: "rootpasswd"
+      ubuntu_password: "ubuntupasswd"
+
+  tasks:
+    - name: Load external VM configuration
+      include_vars:
+        file: vm_details.json
+        name: vm_config
+
+    - name: Ensure VM directories exist
+      ansible.builtin.file:
+        path: "/var/lib/libvirt/images/{{ item.name }}"
+        state: directory
+      loop: "{{ vm_config.topology.vms }}"
+      become: true
+
+    - name: Create cloud-init data directories for VMs (if not yet existing)
+      ansible.builtin.file:
+        path: "/var/lib/libvirt/images/{{ item.name }}/cloud-init"
+        state: directory
+      loop: "{{ vm_config.topology.vms }}"
+      become: true
+
+    - name: Create meta-data file for VMs
+      ansible.builtin.copy:
+        content: |
+          instance-id: {{ item.name }}
+          local-hostname: {{ item.name }}
+        dest: "/var/lib/libvirt/images/{{ item.name }}/cloud-init/meta-data"
+      loop: "{{ vm_config.topology.vms }}"
+      become: true
+
+    - name: Create user-data file for VMs
+      ansible.builtin.copy:
+        content: |
+          #cloud-config
+          disable_root: false
+          ssh_authorized_keys:
+            - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC+J8MXi5adZ06iCDMFyk4aTmxOLC3h0a8d4R8FBNceBZs4pNbbmTD8HUFuQZ9j+UwjE/WSK2Xe1bdBupVaqp7gxGqDPstPGMvcrOhjjvYUpYMnztzYBlBKFZGzAdWv83O9fmX8QSjmw+3nknY+7DdBY/Qe73yKr4/naMj5qfp9ACTqBObwRhp6/vF+Cwlt11GKpc4jK7gdIbCuaHyLmkGBy3A30TVvXkDK5anYj3cMbgmcaWair0mhXLTW8SzaTtA5W/y1aDwaVV+DGwXAxFNo3OTQwRK+sgj+rKRwJEW/8/e/PlRhwo27fwx1F36HermlcJejVpYZ/5tvD6vAFYIwnpGufG1XhJNGite5Zs+Qln+5obMg6+Rr0r0yRxoPgsunKLtqbtMQzzuB9o3PL7yTyN/jxzUmfzexrBQAmfQ8D5d9Vky1PMAHe8ILseIUvBJRjMph3rE2RBjFRbL3AehcLoWkDmMiiNzuoYOT5/0iB1WI210EPZTBUA1ZQa5HmZAIlFgX8MPEn5BcXAhL2ZDVxEey596OsBVICfV/qaBlvvY39sEf58N67AUqi+zFWMAtB37u+paqJYRUfwzqaaq5lCv4F+Ze5vCgVGWKt1MZDJC52WI5GMX6d8+KBNOxaQr6oCCgRyPYVJE4Bx54QezFvP91sYDtK185EoA0uTANxw== {{ item.name }}_key
+          users:
+            - default
+            - name: root
+              lock_passwd: false
+              plain_text_passwd: '{{ base_config.root_password }}'
+            - name: ubuntu
+              lock_passwd: false
+              plain_text_passwd: '{{ base_config.ubuntu_password }}'
+          bootcmd:
+            - dhclient -v || true
+          packages:
+            - iperf3
+            - wireshark
+        dest: "/var/lib/libvirt/images/{{ item.name }}/cloud-init/user-data"
+      loop: "{{ vm_config.topology.vms }}"
+      become: true
+
+    - name: Generate ISO for VMs
+      ansible.builtin.command:
+        cmd: >
+          genisoimage -output /var/lib/libvirt/images/{{ item.name }}/{{ item.name }}-cidata.iso
+          -volid cidata -joliet -rock /var/lib/libvirt/images/{{ item.name }}/cloud-init/meta-data /var/lib/libvirt/images/{{ item.name }}/cloud-init/user-data
+        chdir: "/var/lib/libvirt/images/{{ item.name }}"
+      loop: "{{ vm_config.topology.vms }}"
+      become: true
+
+    - name: Create QEMU images
+      ansible.builtin.command:
+        cmd: >
+          qemu-img create -f qcow2 -F qcow2
+          -o backing_file={{ base_config.base_image_path }}
+          {{ '/var/lib/libvirt/images/' + item.name + '/' + item.name + '.qcow2' }}
+          12G
+      loop: "{{ vm_config.topology.vms }}"
+      become: true
+
+
+    - name: Resize disk for VMs
+      ansible.builtin.command:
+        cmd: >
+          qemu-img resize /var/lib/libvirt/images/{{ item.name }}/{{ item.name }}.qcow2 {{ base_config.vm_disk_size }}
+      loop: "{{ vm_config.topology.vms }}"
+      become: true
+
+    - name: Create VMs using virt-install with custom bridge and default network
+      ansible.builtin.command:
+        cmd: >
+          virt-install --virt-type kvm --name {{ item.name }}
+          --ram {{ base_config.vm_memory }} --vcpus={{ base_config.vm_vcpus }}
+          --os-variant ubuntu22.04
+          --disk path=/var/lib/libvirt/images/{{ item.name }}/{{ item.name }}.qcow2,format=qcow2
+          --disk path=/var/lib/libvirt/images/{{ item.name }}/{{ item.name }}-cidata.iso,device=cdrom
+          --import
+          {% for network in item.networks %}
+          --network bridge={{ network.bridge }},model=virtio,virtualport_type=openvswitch
+          {% endfor %}
+          --noautoconsole
+      loop: "{{ vm_config.topology.vms }}"
+      become: true
