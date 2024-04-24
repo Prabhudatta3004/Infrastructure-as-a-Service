@@ -3,54 +3,44 @@
   hosts: localhost
   become: yes
   vars:
-    container_name: m3tc2
-    namespace: vpc1
-    ovs_bridge_name: sb1obr1
-    veth_host: "{{container_name}}host"
-    veth_container: "{{container_name}}contain"
+    container_name: "{{ container_name }}"
+    ovs_bridge_name: "{{ ovs_bridge_name }}"
+    veth_host: "{{ veth_host }}"
+    veth_container: "{{ veth_container }}"
 
   tasks:
     - name: Ensure docker directory is present
       ansible.builtin.file:
         path: ./docker
         state: directory
-  
+
     - name: Create Dockerfile if it does not exist
       copy:
         dest: "./docker/Dockerfile"
         content: |
           FROM ubuntu:22.04
           # start getting needed packages
-          RUN apt update
-          RUN apt install net-tools -y
-          RUN apt install inetutils-ping -y
-          RUN apt install iproute2 -y
-          RUN apt install openssh-server sudo -y
-          RUN apt install iptables -y
-          RUN apt install dnsmasq -y
-          # Here we just run something in the foreground so container won't exit...
+          RUN apt update && apt install -y net-tools inetutils-ping iproute2 openssh-server sudo iptables dnsmasq
           CMD tail -f /dev/null
         force: no
-    
+
     - name: Build Docker image using shell if it does not exist locally
       ansible.builtin.shell:
         cmd: "docker build -t routerc:latest ./docker"
         executable: /bin/bash
       register: docker_build_result
-      failed_when: docker_build_result.rc != 0  # Fails when return code is not zero
-      changed_when: "'writing image sha256' in docker_build_result.stderr"  # Changed when new image is written
+      failed_when: docker_build_result.rc != 0
 
     - name: Check for existing Docker container
       ansible.builtin.command:
         cmd: "docker ps -a --filter name={{ container_name }} --format '{{ '{{.Names}}' }}'"
       register: docker_ps
-      changed_when: false
 
     - name: Create and start Docker container if it doesn't exist
       ansible.builtin.shell:
         cmd: "docker run -d --name {{ container_name }} --network none -h {{ container_name }} routerc:latest"
       when: container_name not in docker_ps.stdout
-    
+
     - name: Create script to link container namespace to netns if not present
       copy:
         dest: "./container2ns.sh"
@@ -58,9 +48,6 @@
           #!/bin/bash
           cn=$1
           cnpid=$(docker inspect $cn | grep '"Pid"' | awk '{ print $2 }' | sed 's/,.*//' )
-          echo "Now create netns ${cn} based on Pid=${cnpid}"
-          touch /var/run/netns/${cn}
-          echo "ln -sf /proc/${cnpid}/ns/net /var/run/netns/${cn}"
           ln -sf /proc/$cnpid/ns/net /var/run/netns/$cn
         force: no
 
@@ -69,28 +56,21 @@
 
     - name: Execute the container to namespace linking script
       command: ./container2ns.sh {{ container_name }}
-    
+
     - name: Create veth pair
       command: "ip link add {{ veth_host }} type veth peer name {{ veth_container }}"
-      register: veth_creation
-      failed_when: veth_creation.rc != 0
 
-    - name: Move one end of the veth pair to the container namespace
-      ansible.builtin.shell:
-        cmd: "ip link set {{ veth_container }} netns {{ container_name }}"
-      when: veth_creation is changed
+    - name: Attach one end of veth pair to the container
+      command: "ip link set {{ veth_container }} netns {{ container_name }}"
 
-    - name: Add the other end of the veth pair to the OVS bridge
-      ansible.builtin.shell:
-        cmd: "ovs-vsctl add-port {{ ovs_bridge_name }} {{ veth_host }}"
-      when: veth_creation is changed
+    - name: Attach the other end of veth pair to the OVS bridge
+      command: "ovs-vsctl add-port {{ ovs_bridge_name }} {{ veth_host }}"
 
     - name: Set interface up in the container namespace
-      ansible.builtin.shell:
-        cmd: "ip netns exec {{ container_name }} ip link set {{ veth_container }} up"
-      when: veth_creation is changed
+      command: "ip netns exec {{ container_name }} ip link set {{ veth_container }} up"
 
     - name: Set interface up on the host
-      ansible.builtin.shell:
-        cmd: "ip link set {{ veth_host }} up"
-      when: veth_creation is changed
+      command: "ip link set {{ veth_host }} up"
+    
+    - name: Run dhclient inside the container
+      command: ip netns exec {{ container_name }} dhclient {{ veth_container }}
