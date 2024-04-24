@@ -1,0 +1,30 @@
+---
+- name: Delete guest container
+  hosts: localhost
+  become: yes
+  vars:
+    container_name: "{{ container_name }}"
+    veth_container: "{{ veth_container }}"
+
+  tasks:
+    - name: Check for existing Docker container
+      ansible.builtin.command:
+        cmd: "docker ps -a --filter name={{ container_name }} --format '{{ '{{.Names}}' }}'"
+      register: docker_ps
+      changed_when: false
+
+    - name: Exit playbook if the container does not exist
+      meta: end_play
+      when: container_name not in docker_ps.stdout
+
+    - name: Delete veth pair
+      command: "ip netns exec {{ container_name }} ip link del {{ veth_container }}"
+
+    - name: Disconnect and remove network namespace if needed
+      command: "ip netns del {{ container_name }}"
+      ignore_errors: true
+
+    - name: Stop and remove Docker container
+      block:
+        - command: "docker container stop {{ container_name }}"
+        - command: "docker container rm {{ container_name }}"
