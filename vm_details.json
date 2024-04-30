@@ -10,10 +10,10 @@
     "topology": {
         "vms": [
             {
-                "name": "Host1_VM",
+                "name": "VM_AA",
                 "networks": [
                     {
-                        "bridge": "ov011713979936"
+                        "bridge": "ov961714071379"
                     }
                 ]
             }

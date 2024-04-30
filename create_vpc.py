@@ -8,11 +8,9 @@ import hashlib
 import os
 
 def get_current_timestamp():
-    """Returns the current timestamp in a formatted string."""
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 def read_tenant_uuid():
-    """Reads the tenant UUID from a file, returning None if the file doesn't exist."""
     try:
         with open("current_tenant_uuid.txt", "r") as file:
             return file.read().strip()
@@ -21,7 +19,6 @@ def read_tenant_uuid():
         return None
 
 def vpc_exists(tenant_uuid, vpc_name):
-    """Checks if a VPC already exists in the database."""
     conn = sqlite3.connect('tenants.db')
     c = conn.cursor()
     c.execute("SELECT * FROM vpcs WHERE tenant_uuid=? AND vpc_name=?", (tenant_uuid, vpc_name))

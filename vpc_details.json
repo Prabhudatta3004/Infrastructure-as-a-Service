@@ -1,14 +1,14 @@
 {
-    "net_namespace": "68ef1d",
-    "linux_bridge_name": "li011713979936",
-    "bridge_name": "ov011713979936",
-    "subnet_id": "subnet_a713306d",
-    "subnet_block": "192.168.45.0/24",
-    "subnet_gateway": "192.168.45.1",
-    "dhcp_range_start": "192.168.45.50",
-    "dhcp_range_end": "192.168.45.150",
+    "net_namespace": "41c99f",
+    "linux_bridge_name": "li961714071379",
+    "bridge_name": "ov961714071379",
+    "subnet_id": "subnet_a739d586",
+    "subnet_block": "10.10.45.0/24",
+    "subnet_gateway": "10.10.45.1",
+    "dhcp_range_start": "10.10.45.50",
+    "dhcp_range_end": "10.10.45.150",
     "dhcp_subnet_mask": "255.255.255.0",
     "dhcp_lease_time": "12h",
-    "veth_host": "v1011713979936",
-    "veth_ns": "v2011713979936"
+    "veth_host": "v1961714071379",
+    "veth_ns": "v2961714071379"
 }
