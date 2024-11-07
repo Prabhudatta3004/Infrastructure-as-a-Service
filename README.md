@@ -119,6 +119,3 @@ Configuration files are located in the `config/` directory:
 ## License
 This project is licensed under the [MIT License](LICENSE).
 
----
-
-This README provides a high-level overview, installation instructions, examples of how to use your IaaS project, and guidance on contributing. You can further tailor it to match specific requirements or features in your project.
