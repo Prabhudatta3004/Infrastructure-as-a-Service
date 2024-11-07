@@ -1,7 +1,3 @@
-Here's a template for a detailed and effective README file for your Infrastructure as a Service (IaaS) project. This README provides a clear overview of the project structure, its purpose, and guides users through installation, usage, and configuration.
-
----
-
 # Infrastructure as a Service (IaaS) Project
 
 ## Overview
